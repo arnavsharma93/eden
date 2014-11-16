@@ -1,0 +1,25 @@
+*** Settings ***
+Documentation     Test cases for org module
+Resource          ../../resources/main.txt
+
+*** Variables ***
+${CI URL}  http://${BASEURL}/ci/build
+${REPO URL}  https://github.com/arnavsharma93/iiith_pac
+${BRANCH}  master
+*** Test Cases ***
+Create a new Build
+    Login to Eden If Not Logged In  ${VALID USER}  ${VALID PASSWORD}
+    Go To  ${CI URL}/create
+    Input Text  ci_build_branch_url  ${BRANCH URL}
+    Select From List  ci_build_db_type  1
+    Submit CRUD Form
+    Should Show Confirmation
+
+Create a new Build
+    Login to Eden If Not Logged In  ${VALID USER}  ${VALID PASSWORD}
+    Go To  ${CI URL}/create
+    Input Text  ci_build_repo_url  ${REPO URL}
+    Input Text  ci_build_branch  ${BRANCH}
+    Select From List  ci_build_db_type  1
+    Submit CRUD Form
+    Should Show Confirmation

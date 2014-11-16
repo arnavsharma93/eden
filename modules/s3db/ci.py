@@ -55,9 +55,14 @@ class S3CIBuildModel(S3Model):
         tablename = "ci_build"
 
         define_table(tablename,
-                     Field("branch_url",
+                     Field("repo_url",
                            label = T("Eden repo git URL"),
                            default = "https://github.com/flavour/eden",
+                           required = True,
+                           ),
+                     Field("branch",
+                           label = T("Branch"),
+                           default = "master",
                            required = True,
                            ),
                      Field("template",
@@ -107,7 +112,8 @@ class S3CIBuildModel(S3Model):
                   editable = False,
                   deletable = False,
                   insertable = True,
-                  listadd = True
+                  listadd = True,
+                  onaccept = build_onaccept
                   )
 
 
@@ -144,3 +150,30 @@ def ci_rheader(r, tabs=[]):
 
         return rheader
 
+def build_onaccept(form):
+    db = current.db
+    s3db = current.s3db
+    form_vars = form.vars
+
+    citable = s3db.ci_build
+
+    item = db(itable.id == form_vars.id).select(citable.repo_url,
+                                                  citable.branch,
+                                                  limitby = (0, 1)
+                                                 ).first()
+    repo_url = item.repo_url
+    branch = item.branch
+
+    name = "branch_%s_%s" % (repo_url, branch)
+
+    row = current.s3task.schedule_task(
+        name,
+        vars = {
+            "repo_url": repo_url,
+            "branch": branch
+        },
+        function_name = "ci_build",
+        repeats = 1,
+        timeout = 3600,
+        sync_output = 10
+    )

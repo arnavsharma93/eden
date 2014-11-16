@@ -15,12 +15,14 @@ def index():
 
     return dict()
 
+
 # -----------------------------------------------------------------------------
 def build():
 
     from s3 import S3SQLCustomForm, S3SQLInlineComponent, S3SQLInlineLink
 
-    crud_form = S3SQLCustomForm("branch_url",
+    crud_form = S3SQLCustomForm("repo_url",
+                                "branch",
                                 "template",
                                 "db_type",
                                 "prepop",

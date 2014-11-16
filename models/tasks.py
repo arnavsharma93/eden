@@ -30,6 +30,44 @@ def maintenance(period="daily"):
     return result
 
 tasks["maintenance"] = maintenance
+# -----------------------------------------------------------------------------
+if settings.has_module("ci"):
+    import subprocess
+    import os
+    import shutil
+    import errno
+
+    def ci_build(repo_url, branch, location="/Users/arnav/Work/web2py/applications/eden2", user_id=None):
+        def git(*args):
+            try:
+                exec_status = subprocess.check_call(['git'] + list(args))
+            except:
+                raise Exception("Git is not working as expected")
+
+            if not exec_status:
+                return exec_status
+            else:
+                raise Exception("Error in cloning")
+
+        # delete the directory
+        try:
+            shutil.rmtree("asdas")
+        except OSError as e:
+            # ignore if directory not present
+            if e.errno == errno.ENOENT:
+                pass
+
+        git("clone",
+            repo_url,
+            "-b",
+            branch,
+            location
+           )
+
+
+    tasks["ci_build"] = ci_build
+
+
 
 # -----------------------------------------------------------------------------
 if settings.has_module("doc"):
