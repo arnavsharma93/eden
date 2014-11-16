@@ -17,6 +17,7 @@ import s3db.asset
 import s3db.auth
 import s3db.budget
 import s3db.cap
+import s3db.ci
 import s3db.climate
 import s3db.cms
 import s3db.cr
