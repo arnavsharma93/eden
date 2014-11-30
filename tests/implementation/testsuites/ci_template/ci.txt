@@ -1,19 +1,14 @@
 *** Settings ***
 Documentation     Test cases for org module
-Resource          ../../resources/main.txt
+Resource  ../../resources/main.txt
+Library  OperatingSystem
 
 *** Variables ***
 ${CI URL}  http://${BASEURL}/ci/build
-${REPO URL}  https://github.com/arnavsharma93/iiith_pac
-${BRANCH}  master
+${REPO URL}  https://github.com/arnavsharma93/eden
+${BRANCH}  PRs
+${location}  /Users/arnav/Work/web2py/applications/eden2
 *** Test Cases ***
-Create a new Build
-    Login to Eden If Not Logged In  ${VALID USER}  ${VALID PASSWORD}
-    Go To  ${CI URL}/create
-    Input Text  ci_build_branch_url  ${BRANCH URL}
-    Select From List  ci_build_db_type  1
-    Submit CRUD Form
-    Should Show Confirmation
 
 Create a new Build
     Login to Eden If Not Logged In  ${VALID USER}  ${VALID PASSWORD}
@@ -23,3 +18,7 @@ Create a new Build
     Select From List  ci_build_db_type  1
     Submit CRUD Form
     Should Show Confirmation
+
+
+
+

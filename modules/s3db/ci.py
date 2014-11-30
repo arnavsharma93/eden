@@ -73,11 +73,11 @@ class S3CIBuildModel(S3Model):
                      Field("db_type", "integer",
                            label = T("Database"),
                            default = "sqlite3",
-                           requires = IS_IN_SET({1:"mysql", 2: "postgresql", 3:"sqlite3"}),
+                           requires = IS_IN_SET({1:"mysql", 2: "postgresql"}),
                            ),
                      Field("prepop",
                            label = T("Pre-populate"),
-                           default = '("default", "default/users")',
+                           default = ("default", "default/users"),
                            required = True,
                            ),
                      Field("tests",
@@ -90,6 +90,10 @@ class S3CIBuildModel(S3Model):
                            default = "",
                            length = 255,
                            ),
+                     Field("scheduler_id", "reference scheduler_task",
+                           writable = False,
+                           readable = False
+                          ),
                      *s3_meta_fields()
                     )
 
@@ -155,25 +159,32 @@ def build_onaccept(form):
     s3db = current.s3db
     form_vars = form.vars
 
-    citable = s3db.ci_build
+    ci_table = s3db.ci_build
 
-    item = db(itable.id == form_vars.id).select(citable.repo_url,
-                                                  citable.branch,
-                                                  limitby = (0, 1)
-                                                 ).first()
-    repo_url = item.repo_url
-    branch = item.branch
+    item = db(ci_table.id == form_vars.id).select(limitby = (0, 1)).first()
 
-    name = "branch_%s_%s" % (repo_url, branch)
+    name = "branch_%s_%s" % (item.repo_url, item.branch)
+
+    if item.db_type == 1:
+      db_type = "mysql"
+    else:
+      db_type = "postgres"
 
     row = current.s3task.schedule_task(
         name,
         vars = {
-            "repo_url": repo_url,
-            "branch": branch
+            "repo_url": item.repo_url,
+            "branch": item.branch,
+            "template": item.template,
+            "prepop": item.prepop,
+            "db_type": db_type,
+            "tests": item.tests
         },
         function_name = "ci_build",
         repeats = 1,
         timeout = 3600,
         sync_output = 10
     )
+
+
+    item.update_record(scheduler_id=row)

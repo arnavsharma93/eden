@@ -36,34 +36,90 @@ if settings.has_module("ci"):
     import os
     import shutil
     import errno
+    import re
 
-    def ci_build(repo_url, branch, location="/Users/arnav/Work/web2py/applications/eden2", user_id=None):
-        def git(*args):
-            try:
-                exec_status = subprocess.check_call(['git'] + list(args))
-            except:
-                raise Exception("Git is not working as expected")
+    def ci_build(repo_url, branch, template, prepop, db_type, tests, web2py_folder="/Users/arnav/Work/web2py/", app_name="eden2", user_id=None):
+
+        def run_process(name, *args):
+            exec_status = subprocess.check_call(list(args))
 
             if not exec_status:
                 return exec_status
             else:
-                raise Exception("Error in cloning")
+                raise Exception("%s is not working as expected" % name)
+
+        location = os.path.join(web2py_folder, "applications", app_name)
 
         # delete the directory
         try:
-            shutil.rmtree("asdas")
+            shutil.rmtree(location)
         except OSError as e:
             # ignore if directory not present
             if e.errno == errno.ENOENT:
                 pass
 
-        git("clone",
-            repo_url,
-            "-b",
-            branch,
-            location
-           )
+        # clone the branch
+        run_process("cloning",
+                    "git",
+                    "clone",
+                    repo_url,
+                    "-b",
+                    branch,
+                    location
+                    )
 
+        src = os.path.join(location, "private", "templates", "000_config.py")
+        dst = os.path.join(location, "models", "000_config.py")
+
+        # create config file
+        shutil.copyfile(src, dst)
+
+        # read src file
+        with open(src, "r") as config_file:
+            lines = config_file.readlines()
+
+        # write to the destination
+        with open(dst, "w") as cfile:
+            for line in lines:
+                line = re.sub("EDITING_CONFIG_FILE = False",
+                              "EDITING_CONFIG_FILE = True",
+                              line
+                             )
+
+                line = re.sub('settings.base.template = "default"',
+                              'settings.base.template = "%s"' % template,
+                              line
+                              )
+
+                line = re.sub('#settings.database.db_type = "%s"' % db_type,
+                              'settings.database.db_type = "%s"' % db_type,
+                              line
+                             )
+
+                line = re.sub('#settings.base.prepopulate = ("default", "default/users")',
+                              "settings.base.prepopulate = %s" % prepop,
+                              line
+                             )
+
+                line = re.sub("settings.base.debug = False",
+                              "settings.base.debug = True",
+                              line
+                             )
+
+                cfile.write(line)
+
+        # prepop
+        os.chdir(web2py_folder)
+
+        run_process("prepop",
+                    "python",
+                    "web2py.py",
+                    "-S",
+                    app_name,
+                    "-M",
+                    "-R",
+                    "applications/%s/static/scripts/tools/noop.py" % app_name
+                    )
 
     tasks["ci_build"] = ci_build
 
