@@ -37,10 +37,12 @@ if settings.has_module("ci"):
     import shutil
     import errno
     import re
+    import sys
 
-    def ci_build(repo_url, branch, template, prepop, db_type, tests, web2py_folder="/Users/arnav/Work/web2py/", app_name="eden2", user_id=None):
+    def ci_build(repo_url, branch, template, prepop, db_type, tests, web2py_folder="/Users/arnav/Work/web2py/", app_name="eden2", db_host="localhost", db_port="3306", db_name="sahana_temp", db_username="root", db_password="iiit123", user_id=None):
 
         def run_process(name, *args):
+            sys.stdout.write("Running command %s" % ' '.join(list(args)))
             exec_status = subprocess.check_call(list(args))
 
             if not exec_status:
@@ -51,28 +53,67 @@ if settings.has_module("ci"):
         location = os.path.join(web2py_folder, "applications", app_name)
 
         # delete the directory
-        try:
-            shutil.rmtree(location)
-        except OSError as e:
-            # ignore if directory not present
-            if e.errno == errno.ENOENT:
-                pass
+        # try:
+        #     shutil.rmtree(location)
+        # except OSError as e:
+        #     # ignore if directory not present
+        #     if e.errno == errno.ENOENT:
+        #         pass
 
         # clone the branch
-        run_process("cloning",
-                    "git",
-                    "clone",
-                    repo_url,
-                    "-b",
-                    branch,
-                    location
-                    )
+        # run_process("cloning",
+        #             "git",
+        #             "clone",
+        #             repo_url,
+        #             "-b",
+        #             branch,
+        #             location
+        #             )
 
         src = os.path.join(location, "private", "templates", "000_config.py")
         dst = os.path.join(location, "models", "000_config.py")
 
         # create config file
         shutil.copyfile(src, dst)
+
+        # remove and create a new database
+        # mysql
+        if db_type == 1:
+            db_type = "mysql"
+            run_process("drop pre-existing database",
+                        "mysql",
+                        "-h",
+                        db_host,
+                        "-P",
+                        db_port,
+                        "-u",
+                        db_username,
+                        "-p%s" % db_password,
+                        "-e",
+                        "DROP DATABASE IF EXISTS %s;" % db_name
+                        )
+            run_process("create a new database",
+                        "mysql",
+                        "-h",
+                        db_host,
+                        "-P",
+                        db_port,
+                        "-u",
+                        db_username,
+                        "-p%s" % db_password,
+                        "-e",
+                        "CREATE DATABASE %s;" % db_name
+                        )
+
+        # postgres
+        else:
+            db_type = "postgres"
+
+        database_folder = os.path.join(location, "databases")
+
+        for f in os.listdir(database_folder):
+            file_path = os.path.join(database_folder, f)
+            os.remove(file_path)
 
         # read src file
         with open(src, "r") as config_file:
@@ -81,6 +122,9 @@ if settings.has_module("ci"):
         # write to the destination
         with open(dst, "w") as cfile:
             for line in lines:
+                # remove trailing spaces
+                line = line.rstrip()
+
                 line = re.sub("EDITING_CONFIG_FILE = False",
                               "EDITING_CONFIG_FILE = True",
                               line
@@ -96,6 +140,32 @@ if settings.has_module("ci"):
                               line
                              )
 
+
+                line = re.sub('#settings.database.host = "localhost"',
+                              'settings.database.host = "%s"' % db_host,
+                              line
+                             )
+
+                line = re.sub("#settings.database.port = 3306",
+                              "settings.database.port = %s" % db_port,
+                              line
+                             )
+
+                line = re.sub('#settings.database.database = "sahana"',
+                              'settings.database.database = "%s"' % db_name,
+                              line
+                             )
+
+                line = re.sub('#settings.database.password = "password"',
+                              'settings.database.password = "%s"' % db_password,
+                              line
+                             )
+
+                line = re.sub('#settings.database.username = "sahana"',
+                              'settings.database.username = "%s"' % db_username,
+                              line
+                             )
+
                 line = re.sub('#settings.base.prepopulate = ("default", "default/users")',
                               "settings.base.prepopulate = %s" % prepop,
                               line
@@ -106,7 +176,7 @@ if settings.has_module("ci"):
                               line
                              )
 
-                cfile.write(line)
+                cfile.write("%s\n" % line)
 
         # prepop
         os.chdir(web2py_folder)

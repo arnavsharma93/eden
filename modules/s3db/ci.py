@@ -165,11 +165,6 @@ def build_onaccept(form):
 
     name = "branch_%s_%s" % (item.repo_url, item.branch)
 
-    if item.db_type == 1:
-      db_type = "mysql"
-    else:
-      db_type = "postgres"
-
     row = current.s3task.schedule_task(
         name,
         vars = {
@@ -177,7 +172,7 @@ def build_onaccept(form):
             "branch": item.branch,
             "template": item.template,
             "prepop": item.prepop,
-            "db_type": db_type,
+            "db_type": item.db_type,
             "tests": item.tests
         },
         function_name = "ci_build",
