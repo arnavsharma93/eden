@@ -173,7 +173,7 @@ if settings.has_module("nightly"):
     import re
     import sys
 
-    def nightly_build(repo_url, branch, template, prepop, db_type, tests, web2py_folder="/Users/arnav/Work/web2py/", app_name="eden2", db_host="localhost", db_port="3306", db_name="sahana_temp", db_username="root", db_password="iiit123", user_id=None):
+    def nightly_build(build_item, configure_item, app_name="eden2", user_id=None):
 
         def run_process(name, *args):
             sys.stdout.write("Running command %s" % ' '.join(list(args)))
@@ -184,25 +184,40 @@ if settings.has_module("nightly"):
             else:
                 raise Exception("%s is not working as expected" % name)
 
+        repo_url = build_item["repo_url"]
+        branch = build_item["branch"]
+        template = build_item["template"]
+        prepop = build_item["prepop"]
+        db_type = build_item["db_type"]
+        max_depth = build_item["max_depth"]
+
+        web2py_folder = configure_item["web2py_folder"]
+        db_host = configure_item["db_host"]
+        db_port = configure_item["db_port"]
+        db_name = configure_item["db_name"]
+        db_password = configure_item["db_password"]
+        db_username = configure_item["db_username"]
+
+
         location = os.path.join(web2py_folder, "applications", app_name)
 
-        # delete the directory
-        try:
-            shutil.rmtree(location)
-        except OSError as e:
-            # ignore if directory not present
-            if e.errno == errno.ENOENT:
-                pass
+        # # delete the directory
+        # try:
+        #     shutil.rmtree(location)
+        # except OSError as e:
+        #     # ignore if directory not present
+        #     if e.errno == errno.ENOENT:
+        #         pass
 
-        # clone the branch
-        run_process("cloning",
-                    "git",
-                    "clone",
-                    repo_url,
-                    "-b",
-                    branch,
-                    location
-                    )
+        # # clone the branch
+        # run_process("cloning",
+        #             "git",
+        #             "clone",
+        #             repo_url,
+        #             "-b",
+        #             branch,
+        #             location
+        #             )
 
         src = os.path.join(location, "private", "templates", "000_config.py")
         dst = os.path.join(location, "models", "000_config.py")
@@ -241,13 +256,72 @@ if settings.has_module("nightly"):
 
         # postgres
         else:
-            db_type = "postgres"
+            db_type_name = "postgres"
 
-        database_folder = os.path.join(location, "databases")
+            output = subprocess.check_output("psql --version", shell=True).split()
 
-        for f in os.listdir(database_folder):
-            file_path = os.path.join(database_folder, f)
-            os.remove(file_path)
+            version = None
+
+            for word in output:
+                try:
+                    digit = int(word[0])
+                    digits = word.split(".")
+                    version = ".".join(digits[0:2])
+                    version = float(version)
+                    break
+                except:
+                    continue
+
+
+            if version > 9.1:
+                pid = "pid"
+            else:
+                pid = "procpid"
+
+            # terminate active connections query
+            terminate_conn = ("SELECT "
+                              "pg_terminate_backend(pg_stat_activity.%s) "
+                              "FROM "
+                              "pg_stat_activity "
+                              "WHERE "
+                              "pg_stat_activity.datname = '%s' "
+                              "AND %s <> pg_backend_pid();"
+                             ) % (pid, db_name, pid)
+
+            run_process("dropping connections",
+                        "psql",
+                        "-U",
+                        db_username,
+                        "-c",
+                        terminate_conn
+                       )
+
+            # remove database
+            run_process("dropping database",
+                        "psql",
+                        "-U",
+                        db_username,
+                        "-c",
+                        "DROP DATABASE IF EXISTS %s;" % db_name
+                       )
+
+            run_process("create a new database",
+                        "psql",
+                        "-U",
+                        db_username,
+                        "-c",
+                        "CREATE DATABASE %s;" % db_name
+                        )
+
+
+        try:
+            database_folder = os.path.join(location, "databases")
+
+            for f in os.listdir(database_folder):
+                file_path = os.path.join(database_folder, f)
+                os.remove(file_path)
+        except:
+            pass
 
         # read src file
         with open(src, "r") as config_file:
@@ -300,10 +374,16 @@ if settings.has_module("nightly"):
                               line
                              )
 
-                line = re.sub('#settings.base.prepopulate = ("default", "default/users")',
+                line = re.sub('#settings.base.prepopulate = \("default", "default/users"\)',
                               "settings.base.prepopulate = %s" % prepop,
                               line
                              )
+
+                line = re.sub("#settings.ui.navigate_away_confirm = False",
+                              "settings.ui.navigate_away_confirm = False",
+                              line
+                             )
+
 
                 line = re.sub("settings.base.debug = False",
                               "settings.base.debug = True",
@@ -319,13 +399,45 @@ if settings.has_module("nightly"):
                     "python",
                     "web2py.py",
                     "-S",
-                    app_name,
+                    "eden",
                     "-M",
                     "-R",
-                    "applications/%s/static/scripts/tools/noop.py" % app_name
+                    "applications/eden/static/scripts/tools/noop.py"
                     )
 
-    tasks["ci_build"] = ci_build
+        runner_file = os.path.join("applications", app_name, "tests", "edentest_runner.py")
+
+        filename = "%s_%s" % (template, db_type)
+
+        src = os.path.join(location, "tests", "execution", "settings", "config.example.py")
+        dst = os.path.join(location, "tests", "execution", "settings", "config.py")
+
+        # create config file
+        shutil.copyfile(src, dst)
+
+
+        # "python web2py.py --no-banner -M -S eden  -R applications/eden/tests/edentest_runner.py -A  smoke_tests  -o NONE -l NONE"
+        run_process("run tests",
+                    "python",
+                    "web2py.py",
+                    "--no-banner",
+                    "-M",
+                    "-S",
+                    "eden",
+                    "-R",
+                    runner_file,
+                    "-A",
+                    "smoke_tests",
+                    "-o",
+                    "NONE",
+                    "-l",
+                    "NONE",
+                    "-v",
+                    "filename:%s" % filename,
+                    "-v",
+                    "MAXDEPTH:%s" % max_depth
+                   )
+    tasks["nightly_build"] = nightly_build
 
 
 
