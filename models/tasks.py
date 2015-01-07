@@ -172,42 +172,334 @@ if settings.has_module("nightly"):
     import errno
     import re
     import sys
+    import time
 
-    def nightly_build(build_item, configure_item, app_name="eden2", user_id=None):
+    def nightly_build(build_item, user_id=None):
+
+        # def run_process(name, *args):
+        #     sys.stdout.write("Running command %s" % ' '.join(list(args)))
+        #     exec_status = subprocess.check_call(list(args))
+
+        #     if not exec_status:
+        #         return exec_status
+        #     else:
+        #         raise Exception("%s is not working as expected" % name)
+
+
+        def make_header(header):
+            len_header = len(header)
+            len_dlm = 78 - len_header
+            dlm = "=" * (len_dlm/2)
+
+            return "\n%s %s %s\n" % (dlm, header, dlm)
 
         def run_process(name, *args):
-            sys.stdout.write("Running command %s" % ' '.join(list(args)))
-            exec_status = subprocess.check_call(list(args))
 
-            if not exec_status:
-                return exec_status
-            else:
-                raise Exception("%s is not working as expected" % name)
+            command = " ".join(args)
+
+            log_file.write(make_header(name))
+
+            log_file.write("%s\n" % command)
+
+            process = subprocess.Popen(list(args),
+                                       stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE
+                                      )
+            stdout, stderr = process.communicate()
+
+            log_file.write("STDOUT\n")
+            if stdout:
+                log_file.write("%s\n" % stdout)
+
+            log_file.write("STDERR\n")
+            if stderr:
+                log_file.write("%s\n" % stderr)
+
+        def create_sub_build(template, db_type, prepop):
+
+            name = "PARAMS"
+            log_file.write(make_header(name))
+
+            params = "\n template - %s\n Database - %s\n Prepop - %s\n\n" %\
+                    (template, db_type, prepop)
+
+            log_file.write(params)
+
+
+            name = "Copying Config file"
+            log_file.write(make_header(name))
+
+            src = os.path.join(location, "private", "templates", "000_config.py")
+            dst = os.path.join(location, "models", "000_config.py")
+
+            # create config file
+            shutil.copyfile(src, dst)
+
+            # remove and create a new database
+            # mysql
+            if db_type == "mysql":
+                db_host = configure_item["mysql_db_host"]
+                db_port = configure_item["mysql_db_port"]
+                db_name = configure_item["mysql_db_name"]
+                db_password = configure_item["mysql_db_password"]
+                db_username = configure_item["mysql_db_username"]
+                os.environ["PGPASSWORD"] = db_password
+
+                run_process("drop pre-existing database",
+                            "mysql",
+                            "-h",
+                            db_host,
+                            "-P",
+                            db_port,
+                            "-u",
+                            db_username,
+                            "-p%s" % db_password,
+                            "-e",
+                            "DROP DATABASE IF EXISTS %s;" % db_name
+                            )
+                run_process("create a new database",
+                            "mysql",
+                            "-h",
+                            db_host,
+                            "-P",
+                            db_port,
+                            "-u",
+                            db_username,
+                            "-p%s" % db_password,
+                            "-e",
+                            "CREATE DATABASE %s;" % db_name
+                            )
+
+            # postgres
+            elif db_type == "postgres":
+                db_host = configure_item["psql_db_host"]
+                db_port = configure_item["psql_db_port"]
+                db_name = configure_item["psql_db_name"]
+                db_password = configure_item["psql_db_password"]
+                db_username = configure_item["psql_db_username"]
+
+
+                output = subprocess.check_output("psql --version", shell=True).split()
+
+                version = None
+
+                for word in output:
+                    try:
+                        digit = int(word[0])
+                        digits = word.split(".")
+                        version = ".".join(digits[0:2])
+                        version = float(version)
+                        break
+                    except:
+                        continue
+
+                name = "psql version %f" % (version)
+                log_file.write(make_header(name))
+
+                if version > 9.1:
+                    pid = "pid"
+                else:
+                    pid = "procpid"
+
+                # terminate active connections query
+                terminate_conn = ("SELECT "
+                                  "pg_terminate_backend(pg_stat_activity.%s) "
+                                  "FROM "
+                                  "pg_stat_activity "
+                                  "WHERE "
+                                  "pg_stat_activity.datname = '%s' "
+                                  "AND %s <> pg_backend_pid();"
+                                 ) % (pid, db_name, pid)
+
+                run_process("dropping connections",
+                            "psql",
+                            "-U",
+                            db_username,
+                            "-c",
+                            terminate_conn
+                           )
+
+                # remove database
+                run_process("dropping database",
+                            "psql",
+                            "-U",
+                            db_username,
+                            "-c",
+                            "DROP DATABASE IF EXISTS %s;" % db_name
+                           )
+
+                run_process("create a new database",
+                            "psql",
+                            "-U",
+                            db_username,
+                            "-c",
+                            "CREATE DATABASE %s;" % db_name
+                            )
+
+
+            try:
+                database_folder = os.path.join(location, "databases")
+
+                for f in os.listdir(database_folder):
+                    file_path = os.path.join(database_folder, f)
+                    os.remove(file_path)
+            except:
+                pass
+
+            name = "Creating config file"
+            log_file.write(make_header(name))
+
+            # read src file
+            with open(src, "r") as config_file:
+                lines = config_file.readlines()
+
+            # write to the destination
+            with open(dst, "w") as cfile:
+                for line in lines:
+                    # remove trailing spaces
+                    line = line.rstrip()
+
+                    line = re.sub("EDITING_CONFIG_FILE = False",
+                                  "EDITING_CONFIG_FILE = True",
+                                  line
+                                 )
+
+                    line = re.sub('settings.base.template = "default"',
+                                  'settings.base.template = "%s"' % template,
+                                  line
+                                  )
+
+                    line = re.sub('#settings.database.db_type = "%s"' % db_type,
+                                  'settings.database.db_type = "%s"' % db_type,
+                                  line
+                                 )
+
+
+                    line = re.sub('#settings.database.host = "localhost"',
+                                  'settings.database.host = "%s"' % db_host,
+                                  line
+                                 )
+
+                    line = re.sub("#settings.database.port = 3306",
+                                  "settings.database.port = %s" % db_port,
+                                  line
+                                 )
+
+                    line = re.sub('#settings.database.database = "sahana"',
+                                  'settings.database.database = "%s"' % db_name,
+                                  line
+                                 )
+
+                    line = re.sub('#settings.database.password = "password"',
+                                  'settings.database.password = "%s"' % db_password,
+                                  line
+                                 )
+
+                    line = re.sub('#settings.database.username = "sahana"',
+                                  'settings.database.username = "%s"' % db_username,
+                                  line
+                                 )
+
+                    line = re.sub('#settings.base.prepopulate = \("default", "default/users"\)',
+                                  "settings.base.prepopulate = %s" % prepop,
+                                  line
+                                 )
+
+                    line = re.sub("#settings.ui.navigate_away_confirm = False",
+                                  "settings.ui.navigate_away_confirm = False",
+                                  line
+                                 )
+
+
+                    line = re.sub("settings.base.debug = False",
+                                  "settings.base.debug = True",
+                                  line
+                                 )
+
+                    cfile.write("%s\n" % line)
+
+            # prepop
+            name = "Prepop"
+            log_file.write(make_header(name))
+
+            os.chdir(web2py_folder)
+
+            run_process("prepop",
+                        "python",
+                        "web2py.py",
+                        "-S",
+                        app_name,
+                        "-M",
+                        "-R",
+                        "applications/%s/static/scripts/tools/noop.py" % app_name
+                        )
+
+            name = "Copying EdenTest Config file"
+            log_file.write(make_header(name))
+
+            runner_file = os.path.join("applications", app_name, "tests", "edentest_runner.py")
+
+            filename = "%s_%s_%s.txt" %\
+                       (time.strftime("%d.%m.%Y"), template, db_type)
+
+            dst = os.path.join(location, "tests", "execution", "settings", "config.py")
+
+            # create config file
+            # shutil.copyfile(edentest_config, dst)
+
+            name = "Running Tests"
+            log_file.write(make_header(name))
+
+            # "python web2py.py --no-banner -M -S eden  -R applications/eden/tests/edentest_runner.py -A  smoke_tests  -o NONE -l NONE"
+            run_process("run tests",
+                        "python",
+                        "web2py.py",
+                        "--no-banner",
+                        "-M",
+                        "-S",
+                        app_name,
+                        "-R",
+                        runner_file,
+                        "-A",
+                        "smoke_tests",
+                        "-o",
+                        "NONE",
+                        "-l",
+                        "NONE",
+                        "-v",
+                        "filename:%s" % filename,
+                        "-v",
+                        "MAXDEPTH:%s" % max_depth
+                       )
+
+
+
+        log_name = "%s.log" % (time.strftime("%d.%m.%Y"))
+        log_file = open(log_name, "w")
+
+        if not build_item:
+            build_item = db(s3db.nightly_build.id > 0).select().sort().as_dict()
 
         repo_url = build_item["repo_url"]
         branch = build_item["branch"]
-        template = build_item["template"]
-        prepop = build_item["prepop"]
-        db_type = build_item["db_type"]
+        templates = build_item["template"]
+        prepops = build_item["prepop"]
+        db_types = build_item["db_type"]
         max_depth = build_item["max_depth"]
+        build_id = build_item["id"]
 
-        web2py_folder = configure_item["web2py_folder"]
-        db_host = configure_item["db_host"]
-        db_port = configure_item["db_port"]
-        db_name = configure_item["db_name"]
-        db_password = configure_item["db_password"]
-        db_username = configure_item["db_username"]
+        configure_items = db(s3db.nightly_configure.id > 0).select()
+        configure_item = configure_items.first().as_dict()
 
+        web2py_folder = os.path.join(request.folder, "..", "..")
+
+        app_name = configure_item["app_name"]
+        edentest_config = os.path.join(request.folder,
+                                       "uploads",
+                                       configure_item["edentest_config"]
+                                      )
 
         location = os.path.join(web2py_folder, "applications", app_name)
-
-        # # delete the directory
-        # try:
-        #     shutil.rmtree(location)
-        # except OSError as e:
-        #     # ignore if directory not present
-        #     if e.errno == errno.ENOENT:
-        #         pass
 
         # # clone the branch
         # run_process("cloning",
@@ -218,225 +510,36 @@ if settings.has_module("nightly"):
         #             branch,
         #             location
         #             )
+        template_list = templates.replace(' ', '').split(',')
+        prepop_list = prepops.split(';')
+        prepop_list = [str(tuple(prepop.replace(' ', '').split(','))) for prepop in prepop_list]
 
-        src = os.path.join(location, "private", "templates", "000_config.py")
-        dst = os.path.join(location, "models", "000_config.py")
+        db_types_list = db_types.split(';')
+        db_types_list = [db_type.replace(' ', '').split(',') for db_type in db_types_list]
 
-        # create config file
-        shutil.copyfile(src, dst)
+        for i in range(len(prepop_list)):
+            prepop = prepop_list[i]
+            template = template_list[i]
 
-        # remove and create a new database
-        # mysql
-        if db_type == 1:
-            db_type_name = "mysql"
-            run_process("drop pre-existing database",
-                        "mysql",
-                        "-h",
-                        db_host,
-                        "-P",
-                        db_port,
-                        "-u",
-                        db_username,
-                        "-p%s" % db_password,
-                        "-e",
-                        "DROP DATABASE IF EXISTS %s;" % db_name
-                        )
-            run_process("create a new database",
-                        "mysql",
-                        "-h",
-                        db_host,
-                        "-P",
-                        db_port,
-                        "-u",
-                        db_username,
-                        "-p%s" % db_password,
-                        "-e",
-                        "CREATE DATABASE %s;" % db_name
-                        )
+            for i, db_types in enumerate(db_types_list):
+                for db_type in db_types:
+                    create_sub_build(template, db_type, prepop)
+                    # pass
 
-        # postgres
-        else:
-            db_type_name = "postgres"
+        name = "Deleting the build"
+        log_file.write(make_header(name))
+        log_file.close()
 
-            output = subprocess.check_output("psql --version", shell=True).split()
-
-            version = None
-
-            for word in output:
-                try:
-                    digit = int(word[0])
-                    digits = word.split(".")
-                    version = ".".join(digits[0:2])
-                    version = float(version)
-                    break
-                except:
-                    continue
+        # # delete the directory
+        # try:
+        #     shutil.rmtree(location)
+        # except OSError as e:
+        #     # ignore if directory not present
+        #     if e.errno == errno.ENOENT:
+        #         pass
 
 
-            if version > 9.1:
-                pid = "pid"
-            else:
-                pid = "procpid"
 
-            # terminate active connections query
-            terminate_conn = ("SELECT "
-                              "pg_terminate_backend(pg_stat_activity.%s) "
-                              "FROM "
-                              "pg_stat_activity "
-                              "WHERE "
-                              "pg_stat_activity.datname = '%s' "
-                              "AND %s <> pg_backend_pid();"
-                             ) % (pid, db_name, pid)
-
-            run_process("dropping connections",
-                        "psql",
-                        "-U",
-                        db_username,
-                        "-c",
-                        terminate_conn
-                       )
-
-            # remove database
-            run_process("dropping database",
-                        "psql",
-                        "-U",
-                        db_username,
-                        "-c",
-                        "DROP DATABASE IF EXISTS %s;" % db_name
-                       )
-
-            run_process("create a new database",
-                        "psql",
-                        "-U",
-                        db_username,
-                        "-c",
-                        "CREATE DATABASE %s;" % db_name
-                        )
-
-
-        try:
-            database_folder = os.path.join(location, "databases")
-
-            for f in os.listdir(database_folder):
-                file_path = os.path.join(database_folder, f)
-                os.remove(file_path)
-        except:
-            pass
-
-        # read src file
-        with open(src, "r") as config_file:
-            lines = config_file.readlines()
-
-        # write to the destination
-        with open(dst, "w") as cfile:
-            for line in lines:
-                # remove trailing spaces
-                line = line.rstrip()
-
-                line = re.sub("EDITING_CONFIG_FILE = False",
-                              "EDITING_CONFIG_FILE = True",
-                              line
-                             )
-
-                line = re.sub('settings.base.template = "default"',
-                              'settings.base.template = "%s"' % template,
-                              line
-                              )
-
-                line = re.sub('#settings.database.db_type = "%s"' % db_type,
-                              'settings.database.db_type = "%s"' % db_type,
-                              line
-                             )
-
-
-                line = re.sub('#settings.database.host = "localhost"',
-                              'settings.database.host = "%s"' % db_host,
-                              line
-                             )
-
-                line = re.sub("#settings.database.port = 3306",
-                              "settings.database.port = %s" % db_port,
-                              line
-                             )
-
-                line = re.sub('#settings.database.database = "sahana"',
-                              'settings.database.database = "%s"' % db_name,
-                              line
-                             )
-
-                line = re.sub('#settings.database.password = "password"',
-                              'settings.database.password = "%s"' % db_password,
-                              line
-                             )
-
-                line = re.sub('#settings.database.username = "sahana"',
-                              'settings.database.username = "%s"' % db_username,
-                              line
-                             )
-
-                line = re.sub('#settings.base.prepopulate = \("default", "default/users"\)',
-                              "settings.base.prepopulate = %s" % prepop,
-                              line
-                             )
-
-                line = re.sub("#settings.ui.navigate_away_confirm = False",
-                              "settings.ui.navigate_away_confirm = False",
-                              line
-                             )
-
-
-                line = re.sub("settings.base.debug = False",
-                              "settings.base.debug = True",
-                              line
-                             )
-
-                cfile.write("%s\n" % line)
-
-        # prepop
-        os.chdir(web2py_folder)
-
-        run_process("prepop",
-                    "python",
-                    "web2py.py",
-                    "-S",
-                    "eden",
-                    "-M",
-                    "-R",
-                    "applications/eden/static/scripts/tools/noop.py"
-                    )
-
-        runner_file = os.path.join("applications", app_name, "tests", "edentest_runner.py")
-
-        filename = "%s_%s" % (template, db_type)
-
-        src = os.path.join(location, "tests", "execution", "settings", "config.example.py")
-        dst = os.path.join(location, "tests", "execution", "settings", "config.py")
-
-        # create config file
-        shutil.copyfile(src, dst)
-
-
-        # "python web2py.py --no-banner -M -S eden  -R applications/eden/tests/edentest_runner.py -A  smoke_tests  -o NONE -l NONE"
-        run_process("run tests",
-                    "python",
-                    "web2py.py",
-                    "--no-banner",
-                    "-M",
-                    "-S",
-                    "eden",
-                    "-R",
-                    runner_file,
-                    "-A",
-                    "smoke_tests",
-                    "-o",
-                    "NONE",
-                    "-l",
-                    "NONE",
-                    "-v",
-                    "filename:%s" % filename,
-                    "-v",
-                    "MAXDEPTH:%s" % max_depth
-                   )
     tasks["nightly_build"] = nightly_build
 
 
