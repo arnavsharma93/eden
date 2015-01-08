@@ -215,6 +215,8 @@ if settings.has_module("nightly"):
             if stderr:
                 log_file.write("%s\n" % stderr)
 
+            return process.returncode
+
         def create_sub_build(template, db_type, prepop):
 
             name = "PARAMS"
@@ -439,46 +441,60 @@ if settings.has_module("nightly"):
 
             runner_file = os.path.join("applications", app_name, "tests", "edentest_runner.py")
 
-            filename = "%s_%s_%s.txt" %\
-                       (time.strftime("%d.%m.%Y"), template, db_type)
-
             dst = os.path.join(location, "tests", "execution", "settings", "config.py")
 
             # create config file
-            # shutil.copyfile(edentest_config, dst)
+            shutil.copyfile(edentest_config, dst)
 
             name = "Running Tests"
             log_file.write(make_header(name))
 
             # "python web2py.py --no-banner -M -S eden  -R applications/eden/tests/edentest_runner.py -A  smoke_tests  -o NONE -l NONE"
-            run_process("run tests",
-                        "python",
-                        "web2py.py",
-                        "--no-banner",
-                        "-M",
-                        "-S",
-                        app_name,
-                        "-R",
-                        runner_file,
-                        "-A",
-                        "smoke_tests",
-                        "-o",
-                        "NONE",
-                        "-l",
-                        "NONE",
-                        "-v",
-                        "filename:%s" % filename,
-                        "-v",
-                        "MAXDEPTH:%s" % max_depth
-                       )
+            filename = "%s_%s.txt" % (template, db_type)
+
+            filepath = os.path.join(abs_results_folder, filename)
+
+            rel_filepath = os.path.join(results_folder, filename)
+            results = db(table.id == build_id).select().first().results
 
 
+            rc = run_process("run tests",
+                             "python",
+                             "web2py.py",
+                             "--no-banner",
+                             "-M",
+                             "-S",
+                             app_name,
+                             "-R",
+                             runner_file,
+                             "-A",
+                             "smoke_tests",
+                             "-o",
+                             "NONE",
+                             "-l",
+                             "NONE",
+                             "-v",
+                             "filename:%s" % filepath,
+                             "-v",
+                             "MAXDEPTH:%s" % max_depth
+                            )
 
-        log_name = "%s.log" % (time.strftime("%d.%m.%Y"))
-        log_file = open(log_name, "w")
+            if not results:
+                db(table.id == build_id).update(results="[('%s','%d')]" %\
+                                                        (rel_filepath, rc))
+            else:
+                results_list = eval(results)
+                results_list.append((rel_filepath, rc))
+                results = str(results_list)
+                db(table.id == build_id).update(results=results)
 
-        if not build_item:
-            build_item = db(s3db.nightly_build.id > 0).select().sort().as_dict()
+            db.commit()
+
+            return rc
+
+
+        table = s3db.nightly_build
+
 
         repo_url = build_item["repo_url"]
         branch = build_item["branch"]
@@ -487,6 +503,32 @@ if settings.has_module("nightly"):
         db_types = build_item["db_type"]
         max_depth = build_item["max_depth"]
         build_id = build_item["id"]
+
+        # build triggered now
+        if "date" in build_item:
+            build_date = build_item["date"]
+        # build triggered at night
+        else:
+            build_date = time.strftime("%d.%m.%Y")
+
+        log_name = "log.txt"
+
+        abs_results_folder = os.path.join(request.folder, "static", build_date)
+        results_folder = os.path.join("static", build_date)
+
+        if not os.path.exists(abs_results_folder):
+            os.makedirs(abs_results_folder)
+
+        log_file_path = os.path.join(abs_results_folder, log_name)
+        log_file = open(log_file_path, "w")
+
+
+
+        db(table.id == build_id).update(log_file=os.path.join(results_folder,
+                                                              log_name
+                                                             )
+                                        )
+        db.commit()
 
         configure_items = db(s3db.nightly_configure.id > 0).select()
         configure_item = configure_items.first().as_dict()
@@ -517,18 +559,42 @@ if settings.has_module("nightly"):
         db_types_list = db_types.split(';')
         db_types_list = [db_type.replace(' ', '').split(',') for db_type in db_types_list]
 
+        ret_code = 0
+        error = False
+
         for i in range(len(prepop_list)):
             prepop = prepop_list[i]
             template = template_list[i]
+            db_types = db_types_list[i]
+            for db_type in db_types:
+                rc = create_sub_build(template,
+                                      db_type,
+                                      prepop
+                                     )
+                if rc in (252, 253, 255):
+                    error = True
+                    break
+                ret_code = ret_code + rc
+                # pass
 
-            for i, db_types in enumerate(db_types_list):
-                for db_type in db_types:
-                    create_sub_build(template, db_type, prepop)
-                    # pass
+        if not error:
+            if not ret_code:
+                status = "PASS"
+            else:
+                status = "FAIL"
+        else:
+            status = "ERROR"
+
 
         name = "Deleting the build"
         log_file.write(make_header(name))
         log_file.close()
+
+        db(table.id == build_id).update(build_status=status)
+        db.commit()
+
+
+
 
         # # delete the directory
         # try:
@@ -537,7 +603,6 @@ if settings.has_module("nightly"):
         #     # ignore if directory not present
         #     if e.errno == errno.ENOENT:
         #         pass
-
 
 
     tasks["nightly_build"] = nightly_build

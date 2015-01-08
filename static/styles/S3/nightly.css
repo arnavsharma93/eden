@@ -1,0 +1,19 @@
+.label_class {
+    font-weight: bold;
+}
+
+.completed {
+    background-color: #56BAEC !important;
+}
+.failed {
+    background-color: #FFAEAE !important;
+}
+.assigned {
+    background-color: #B4D8E7 !important;
+}
+.running {
+    background-color: #B0E57C !important;
+}
+.queued {
+    background-color: #FFEC94 !important;
+}
