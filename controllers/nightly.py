@@ -98,20 +98,22 @@ def build():
         rows = db(query).select()
 
         for row in rows:
-            query = (row.scheduler_id == sctable.id)
-            sc_row = db(query).select().first()
-            task_status = sc_row.status
+            if row.scheduler_id:
 
-            if task_status not in ("COMPLETED", "FAILED"):
-                row.update_record(task_status=task_status,
-                                  build_status="BUILDING"
-                                 )
-            elif task_status == "FAILED":
-                row.update_record(task_status=task_status,
-                                  build_status="ERROR"
-                                 )
+                query = (row.scheduler_id == sctable.id)
+                sc_row = db(query).select().first()
+                task_status = sc_row.status
 
-            row.update_record(task_status=task_status)
+                if task_status not in ("COMPLETED", "FAILED"):
+                    row.update_record(task_status=task_status,
+                                      build_status="BUILDING"
+                                     )
+                elif task_status == "FAILED":
+                    row.update_record(task_status=task_status,
+                                      build_status="ERROR"
+                                     )
+
+                row.update_record(task_status=task_status)
 
         return True
 
@@ -142,7 +144,7 @@ def build():
             if build_row.results:
                 results = eval(build_row.results)
 
-            if sc_row.status == "FAILED":
+            if sc_row and sc_row.status == "FAILED":
 
                 resource = s3db.resource("scheduler_run")
                 task = db(resource.table.task_id == sc_row.id).select().first()
