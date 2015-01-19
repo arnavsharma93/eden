@@ -26,8 +26,6 @@ def build():
                                 "db_type",
                                 "prepop",
                                 "max_depth",
-                                "scheduler_id",
-                                "trigger_now"
                                 )
 
     s3db.configure("nightly_build", crud_form=crud_form)
@@ -35,13 +33,16 @@ def build():
     def prep(r):
         configure_table = s3db.nightly_configure
 
+        # if configuration not created, a build can not be run
         if db(configure_table).isempty():
             s3db.configure("nightly_build",
                            insertable = False
                           )
             response.error = "Create Configuration first"
 
-
+        # update colors on the datatable
+        # ToDo: On performing an operation on datatable, the updated colors are
+        # lost. Fix that.
         update_color = """
             $(document).ready(function() {
                 var table = $("#datatable");
@@ -61,7 +62,7 @@ def build():
                             break;
 
                         case "FAILED":
-                            $(this).addClass("failed");
+                            $(this).addClass("error");
                             break;
 
                         case "QUEUED":
@@ -93,27 +94,31 @@ def build():
         build_table = s3db.nightly_build
         sctable = db.scheduler_task
 
-
-        query = (build_table.task_status != "FAILED") & (build_table.task_status != "COMPLETED")
+        # query all running builds
+        query = (build_table.task_status != "FAILED") &\
+                (build_table.task_status != "COMPLETED")
         rows = db(query).select()
 
+        # iterate over all running builds
         for row in rows:
             if row.scheduler_id:
-
+                # get the scheduler status and update the task_status of build
                 query = (row.scheduler_id == sctable.id)
                 sc_row = db(query).select().first()
                 task_status = sc_row.status
 
+                # update the build status
+                # if build still running
                 if task_status not in ("COMPLETED", "FAILED"):
-                    row.update_record(task_status=task_status,
-                                      build_status="BUILDING"
-                                     )
+                    db(build_table.id == row.id).update(build_status="BUILDING")
+                # if build could not complete
+                # case when the build is completed is handled in tasks.py
                 elif task_status == "FAILED":
-                    row.update_record(task_status=task_status,
-                                      build_status="ERROR"
-                                     )
+                    db(build_table.id == row.id).update(build_status="ERROR")
 
-                row.update_record(task_status=task_status)
+
+                db(build_table.id == row.id).update(task_status=task_status)
+                db.commit()
 
         return True
 
@@ -125,36 +130,47 @@ def build():
 
         if r.method in (None, "read") and r.id:
 
-            # get scheduler status for the last queued task
+            # get scheduler for the last queued task
             build_table = s3db.nightly_build
             sctable = db.scheduler_task
 
             query = (build_table.id == r.id)
             sc_row = db(query).select(sctable.id,
                                    sctable.status,
-                                   join = build_table.on(build_table.scheduler_id==sctable.id),
+                                   join = build_table.on(
+                                            build_table.scheduler_id==sctable.id
+                                                        ),
                                    orderby = build_table.scheduler_id
                                    ).last()
 
+            # get the build
+            build_row = db(query).select().first()
 
             item_append = output["item"][0].append
-            build_row = db(query).select().first()
             log_file = build_row.log_file
+
+            # get the path of the results file
             results = []
             if build_row.results:
                 results = eval(build_row.results)
 
+            # add the traceback
             if sc_row and sc_row.status == "FAILED":
 
                 resource = s3db.resource("scheduler_run")
                 task = db(resource.table.task_id == sc_row.id).select().first()
 
-                item_append(TR(TD(LABEL("Traceback", _class="label_class"), _class="w2p_fl")))
+                item_append(TR(TD(LABEL("Traceback", _class="label_class"),
+                                  _class="w2p_fl"
+                                 )))
                 traceback = task.traceback
 
                 item_append(TR(TD(PRE(traceback))))
 
-            item_append(TR(TD(LABEL("Logs", _class="label_class"), _class="w2p_fl")))
+            # add logs
+            item_append(TR(TD(LABEL("Logs", _class="label_class"),
+                              _class="w2p_fl"
+                             )))
 
 
             link_log_file = "%s://%s/%s/%s" % (request.env.wsgi_url_scheme,
@@ -164,15 +180,16 @@ def build():
                                               )
             item_append(TR(TD(A('Logs', _href=link_log_file))))
 
-            item_append(TR(TD(LABEL("Results", _class="label_class"), _class="w2p_fl")))
-
+            # add results
+            item_append(TR(TD(LABEL("Results", _class="label_class"),
+                                    _class="w2p_fl")))
             for result in results:
-                print result
+                # results are stored in the manner [(rc, filepath)]
                 result_file = result[0]
                 rc = int(result[1])
 
-
-                link_result_file = "%s://%s/%s/%s" % (request.env.wsgi_url_scheme,
+                url_scheme = request.env.wsgi_url_scheme
+                link_result_file = "%s://%s/%s/%s" % (url_scheme,
                                                       request.env.http_host,
                                                       request.application,
                                                       result_file
@@ -186,14 +203,16 @@ def build():
                 else:
                     status = "ERROR"
 
-                item_append(TR(TD(A("%s %s" % (status, filename), XML('<br>'), _href=link_result_file))))
+                item_append(TR(TD(A("%s %s" % (status, filename), XML('<br>'),
+                                    _href=link_result_file
+                                    ))))
 
         return output
 
     s3.postp = postp
-    return s3_rest_controller(rheader=s3db.nightly_rheader)
+    return s3_rest_controller()
 
-
+# -----------------------------------------------------------------------------
 def configure():
 
     from s3 import S3SQLCustomForm
@@ -203,11 +222,20 @@ def configure():
 
     insertable = False
 
+    # only one record can be inserted
     if db(configure_table).isempty():
         insertable = True
 
+    crud_form = S3SQLCustomForm(
+                                )
 
-    crud_form = S3SQLCustomForm("emails",
+    crud_form = S3SQLCustomForm("repo_url",
+                                "branch",
+                                "template",
+                                "db_type",
+                                "prepop",
+                                "max_depth",
+                                "emails",
                                 "subscriptions",
                                 "app_name",
                                 "psql_db_name",
@@ -223,16 +251,9 @@ def configure():
                                 "edentest_config"
                                 )
 
-    s3db.configure("nightly_configure", crud_form=crud_form, insertable=insertable)
+    s3db.configure("nightly_configure",
+                   crud_form=crud_form,
+                   insertable=insertable
+                  )
 
-    def prep(r):
-        return True
-
-    s3.prep = prep
-
-    def postp(r, output):
-        return output
-
-    s3.postp = postp
-
-    return s3_rest_controller(rheader=s3db.nightly_rheader)
+    return s3_rest_controller()

@@ -1,7 +1,10 @@
 .label_class {
     font-weight: bold;
+    margin-top: 8px;
 }
-
+.error {
+    background-color: #FF9966 !important;
+}
 .completed {
     background-color: #56BAEC !important;
 }

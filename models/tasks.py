@@ -174,19 +174,36 @@ if settings.has_module("nightly"):
     import sys
     import time
 
+    def create_nightly_build(user_id=None):
+        ctable = s3db.nightly_configure
+        configure_item = db(ctable.id > 0).select().first()
+        date = time.strftime("%d.%m.%Y")
+
+        # btable = s3db.nightly_build
+        if configure_item:
+            s3db.nightly_build.insert(repo_url = configure_item["repo_url"],
+                                      branch = configure_item["branch"],
+                                      templates = configure_item["template"],
+                                      prepops = configure_item["prepop"],
+                                      db_types = configure_item["db_type"],
+                                      max_depth = configure_item["max_depth"],
+                                      date = date
+                                     )
+            db.commit()
+
+
     def nightly_build(build_item, user_id=None):
-
-        # def run_process(name, *args):
-        #     sys.stdout.write("Running command %s" % ' '.join(list(args)))
-        #     exec_status = subprocess.check_call(list(args))
-
-        #     if not exec_status:
-        #         return exec_status
-        #     else:
-        #         raise Exception("%s is not working as expected" % name)
-
+        """
+            Function that runs the nightly build. It does the following in order:
+            1. Clones the given git branch
+            2. For each of the template given along with their respective databases
+               it runs the EdenTest smoke tests.
+        """
 
         def make_header(header):
+            """
+                Make log file header
+            """
             len_header = len(header)
             len_dlm = 78 - len_header
             dlm = "=" * (len_dlm/2)
@@ -194,11 +211,16 @@ if settings.has_module("nightly"):
             return "\n%s %s %s\n" % (dlm, header, dlm)
 
         def run_process(name, *args):
+            """
+                Run the process and write the stdout and stdin to the log file.
+                name - the name of the process to be run which becomes the header in
+                the log file
+                Rest of the args are joined to build the command
+            """
 
             command = " ".join(args)
 
             log_file.write(make_header(name))
-
             log_file.write("%s\n" % command)
 
             process = subprocess.Popen(list(args),
@@ -218,13 +240,15 @@ if settings.has_module("nightly"):
             return process.returncode
 
         def create_sub_build(template, db_type, prepop):
+            """
+                Creates a sub build for the given template, db_type and prepop
+            """
 
             name = "PARAMS"
             log_file.write(make_header(name))
 
             params = "\n template - %s\n Database - %s\n Prepop - %s\n\n" %\
                     (template, db_type, prepop)
-
             log_file.write(params)
 
 
@@ -281,10 +305,15 @@ if settings.has_module("nightly"):
                 db_username = configure_item["psql_db_username"]
 
 
-                output = subprocess.check_output("psql --version", shell=True).split()
+
+                # get the version number of postgres as syntax differs for
+                # versions > 9.1
+                output = subprocess.check_output(
+                                                "psql --version",
+                                                 shell=True
+                                                ).split()
 
                 version = None
-
                 for word in output:
                     try:
                         digit = int(word[0])
@@ -321,7 +350,6 @@ if settings.has_module("nightly"):
                             terminate_conn
                            )
 
-                # remove database
                 run_process("dropping database",
                             "psql",
                             "-U",
@@ -338,8 +366,12 @@ if settings.has_module("nightly"):
                             "CREATE DATABASE %s;" % db_name
                             )
 
+            else:
+                # Nothing to be done in case of sqlite
+                pass
 
             try:
+                # remove the database folder
                 database_folder = os.path.join(location, "databases")
 
                 for f in os.listdir(database_folder):
@@ -393,16 +425,19 @@ if settings.has_module("nightly"):
                                  )
 
                     line = re.sub('#settings.database.password = "password"',
-                                  'settings.database.password = "%s"' % db_password,
+                                  'settings.database.password = "%s"' %\
+                                  db_password,
                                   line
                                  )
 
                     line = re.sub('#settings.database.username = "sahana"',
-                                  'settings.database.username = "%s"' % db_username,
+                                  'settings.database.username = "%s"' %\
+                                  db_username,
                                   line
                                  )
 
-                    line = re.sub('#settings.base.prepopulate = \("default", "default/users"\)',
+                    line = re.sub(('#settings.base.prepopulate '
+                                   '= \("default", "default/users"\)'),
                                   "settings.base.prepopulate = %s" % prepop,
                                   line
                                  )
@@ -434,29 +469,30 @@ if settings.has_module("nightly"):
                         "-M",
                         "-R",
                         "applications/%s/static/scripts/tools/noop.py" % app_name
-                        )
+                       )
 
             name = "Copying EdenTest Config file"
             log_file.write(make_header(name))
 
-            runner_file = os.path.join("applications", app_name, "tests", "edentest_runner.py")
+            runner_file = os.path.join("applications",
+                                       app_name,
+                                       "tests",
+                                       "edentest_runner.py"
+                                      )
 
-            dst = os.path.join(location, "tests", "execution", "settings", "config.py")
-
-            # create config file
-            shutil.copyfile(edentest_config, dst)
-
+            # run the tests
             name = "Running Tests"
             log_file.write(make_header(name))
 
-            # "python web2py.py --no-banner -M -S eden  -R applications/eden/tests/edentest_runner.py -A  smoke_tests  -o NONE -l NONE"
+            # "python web2py.py --no-banner -M -S eden  -R
+            # applications/eden/tests/edentest_runner.py -A  smoke_tests
+            # -o NONE -l NONE"
             filename = "%s_%s.txt" % (template, db_type)
 
+            # absolute path of the results file
             filepath = os.path.join(abs_results_folder, filename)
-
+            # relative path of the results file
             rel_filepath = os.path.join(results_folder, filename)
-            results = db(table.id == build_id).select().first().results
-
 
             rc = run_process("run tests",
                              "python",
@@ -479,6 +515,10 @@ if settings.has_module("nightly"):
                              "MAXDEPTH:%s" % max_depth
                             )
 
+            # add the path of the current results file to the current build
+            # results
+            results = db(table.id == build_id).select().first().results
+
             if not results:
                 db(table.id == build_id).update(results="[('%s','%d')]" %\
                                                         (rel_filepath, rc))
@@ -489,12 +529,11 @@ if settings.has_module("nightly"):
                 db(table.id == build_id).update(results=results)
 
             db.commit()
-
+            # return the return code of the test run
             return rc
-
+            # function ends
 
         table = s3db.nightly_build
-
 
         repo_url = build_item["repo_url"]
         branch = build_item["branch"]
@@ -503,44 +542,34 @@ if settings.has_module("nightly"):
         db_types = build_item["db_type"]
         max_depth = build_item["max_depth"]
         build_id = build_item["id"]
+        build_date = build_item["date"]
 
-        # build triggered now
-        if "date" in build_item:
-            build_date = build_item["date"]
-        # build triggered at night
-        else:
-            build_date = time.strftime("%d.%m.%Y")
-
-        log_name = "log.txt"
-
+        # results folder
         abs_results_folder = os.path.join(request.folder, "static", build_date)
         results_folder = os.path.join("static", build_date)
 
         if not os.path.exists(abs_results_folder):
             os.makedirs(abs_results_folder)
 
+        # create log file
+        log_name = "log.txt"
         log_file_path = os.path.join(abs_results_folder, log_name)
-        log_file = open(log_file_path, "w")
+        log_file = open(log_file_path, "w", 0)
 
-
-
-        db(table.id == build_id).update(log_file=os.path.join(results_folder,
+        # add log file to the current build
+        db(table.id == build_id).update(log_file=os.path.join(
+                                                              results_folder,
                                                               log_name
                                                              )
                                         )
         db.commit()
 
+        # get the configuration
         configure_items = db(s3db.nightly_configure.id > 0).select()
         configure_item = configure_items.first().as_dict()
 
-        web2py_folder = os.path.join(request.folder, "..", "..")
-
         app_name = configure_item["app_name"]
-        edentest_config = os.path.join(request.folder,
-                                       "uploads",
-                                       configure_item["edentest_config"]
-                                      )
-
+        web2py_folder = os.path.join(request.folder, "..", "..")
         location = os.path.join(web2py_folder, "applications", app_name)
 
         # # clone the branch
@@ -552,12 +581,32 @@ if settings.has_module("nightly"):
         #             branch,
         #             location
         #             )
-        template_list = templates.replace(' ', '').split(',')
-        prepop_list = prepops.split(';')
-        prepop_list = [str(tuple(prepop.replace(' ', '').split(','))) for prepop in prepop_list]
 
+        # create EdenTest config file
+        edentest_config = os.path.join(request.folder,
+                                       "uploads",
+                                       configure_item["edentest_config"]
+                                      )
+        dst = os.path.join(location,
+                           "tests",
+                           "execution",
+                           "settings",
+                           "config.py"
+                          )
+        shutil.copyfile(edentest_config, dst)
+
+        # parse the list of templates
+        template_list = templates.replace(' ', '').split(',')
+
+        # parse the list of prepops
+        prepop_list = prepops.split(';')
+        prepop_list = [str(tuple(prepop.replace(' ', '').split(',')))
+                       for prepop in prepop_list]
+
+        # parse the list of databases
         db_types_list = db_types.split(';')
-        db_types_list = [db_type.replace(' ', '').split(',') for db_type in db_types_list]
+        db_types_list = [db_type.replace(' ', '').split(',')
+                         for db_type in db_types_list]
 
         ret_code = 0
         error = False
@@ -571,12 +620,13 @@ if settings.has_module("nightly"):
                                       db_type,
                                       prepop
                                      )
+                # if error in return code
                 if rc in (252, 253, 255):
                     error = True
                     break
                 ret_code = ret_code + rc
-                # pass
 
+        # for all the tests passing: ret_code should be zero
         if not error:
             if not ret_code:
                 status = "PASS"
@@ -585,16 +635,14 @@ if settings.has_module("nightly"):
         else:
             status = "ERROR"
 
-
-        name = "Deleting the build"
-        log_file.write(make_header(name))
-        log_file.close()
-
+        # update status of the build
         db(table.id == build_id).update(build_status=status)
         db.commit()
 
-
-
+        # teardown
+        name = "Deleting the build"
+        log_file.write(make_header(name))
+        log_file.close()
 
         # # delete the directory
         # try:

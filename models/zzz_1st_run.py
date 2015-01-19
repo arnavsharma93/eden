@@ -120,50 +120,12 @@ if len(pop_list) > 0:
                              repeats=0)
 
     if has_module("nightly"):
-        table = s3db.nightly_build
-        old_build_item = db(table.id > 0).select().sort()
-        date = time.strftime("%d.%m.%Y")
+        scheduler_id = s3task.schedule_task("create_nightly_build",
+                                            period=86400,  # 24 hours
+                                            timeout=82800, # 23 hours
+                                            repeats=0    # unlimited
+                                           )
 
-        db(table).insert(repo_url = old_build_item["repo_url"],
-                         branch = old_build_item["branch"],
-                         templates = old_build_item["template"],
-                         prepops = old_build_item["prepop"],
-                         db_types = old_build_item["db_type"],
-                         max_depth = old_build_item["max_depth"]
-                        )
-        db.commit()
-        build_row = db(table.id > 0).select().sort()
-
-        build_item = {
-            "id": build_row.id,
-            "repo_url": build_row.repo_url,
-            "branch": build_row.branch,
-            "template": build_row.template,
-            "prepop": build_row.prepop,
-            "db_type": build_row.db_type,
-            "max_depth": build_row.max_depth,
-            "date": None
-        }
-
-        scheduler_id = s3task.schedule_task(
-                        date,
-                        vars = {
-                            "build_item": build_item
-                        },
-                        function_name = "nightly_build",
-                        period=86400,  # 24 hours
-                        timeout=82800, # 23 hours
-                        repeats=0    # unlimited
-        )
-
-        rows = db(build_table.date == date).select()
-        if rows:
-            for row in rows:
-                row.update_record(deleted=True)
-
-
-        build_irow.update_record(scheduler_id=scheduler_id,
-                                 date=date)
     # Daily maintenance
     s3task.schedule_task("maintenance",
                          vars={"period":"daily"},

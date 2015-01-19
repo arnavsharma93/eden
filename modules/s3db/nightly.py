@@ -27,7 +27,6 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 """
 __all__ = ("S3NightlyBuildModel",
-           "nightly_rheader",
            "nightly_get_templates"
           )
 
@@ -57,6 +56,7 @@ class S3NightlyBuildModel(S3Model):
 
         define_table(tablename,
                      Field("date",
+                           default=None,
                            label = T("Date"),
                            writable = False,
                            readable = True
@@ -76,7 +76,6 @@ class S3NightlyBuildModel(S3Model):
                            default = "default",
                            comment = "Enter list of templates to be tested, comma separated, eg: default, IFRC",
                            required = True
-                           # requires = IS_IN_SET(nightly_get_templates(), zero=None),
                            ),
                      Field("db_type",
                            label = T("Database"),
@@ -119,11 +118,6 @@ class S3NightlyBuildModel(S3Model):
                      Field("log_file",
                            label = T("Log File"),
                            writable = False,
-                           readable = False
-                           ),
-                     Field("trigger_now", "boolean",
-                           label = T("Trigger now"),
-                           writable = True,
                            readable = False
                            ),
                      Field("results",
@@ -236,6 +230,49 @@ class S3NightlyBuildModel(S3Model):
                            label = T("EdenTest Config File"),
                            required = True
                            ),
+                     Field("repo_url",
+                           label = T("Eden repo git URL"),
+                           default = "https://github.com/flavour/eden",
+                           required = True,
+                           ),
+                     Field("branch",
+                           label = T("Branch"),
+                           default = "master",
+                           required = True,
+                           ),
+                     Field("template",
+                           label = T("Template"),
+                           default = "default",
+                           comment = "Enter list of templates to be tested, \
+                                      comma separated, eg: default, IFRC",
+                           required = True
+                           ),
+                     Field("db_type",
+                           label = T("Database"),
+                           default = "mysql, postgres",
+                           comment = "Enter the list of databases among \
+                                     (mysql, postgres, sqlite3) for each of \
+                                     the template given above. Comma delimited \
+                                    internally and semi-colon delimited per \
+                                     template eg: mysql, postgres; mysql, \
+                                     sqlite3",
+                           required = True
+                           ),
+                     Field("prepop",
+                           label = T("Pre-populate"),
+                           default = "default, default/users",
+                           comment = "Enter prepop settings for each of the \
+                                     template mentioned above, comma delimited \
+                                     internally and semi-colon delimited per \
+                                     template. eg: default, default/users; \
+                                     IFRC/Train, default/users",
+                           required = True,
+                           ),
+                     Field("max_depth",
+                           label = T("Maximum depth"),
+                           default = 1,
+                           length = 255,
+                           ),
                      *s3_meta_fields()
                     )
 
@@ -273,23 +310,7 @@ def nightly_get_templates():
 
     return templates
 
-
 # -----------------------------------------------------------------------------
-def nightly_rheader(r, tabs=[]):
-    """ Resource component page header """
-
-    if r.representation == "html":
-
-        T = current.T
-
-        tabs = [(T("Build details"), "nightly_build"),(T("Configuration details"), "nightly_configuration")]
-
-        rheader_tabs = s3_rheader_tabs(r, tabs)
-
-        rheader = DIV(rheader_tabs)
-
-        return rheader
-
 def build_onvalidation(form):
     form_vars = form.vars
 
@@ -309,6 +330,7 @@ def build_onvalidation(form):
         form.errors.db_type = err_msg
         return
 
+# -----------------------------------------------------------------------------
 def build_onaccept(form):
     db = current.db
     s3db = current.s3db
@@ -318,37 +340,38 @@ def build_onaccept(form):
     build_table = s3db.nightly_build
     build_row = db(build_table.id == form_vars.id).select(limitby = (0, 1)).first()
 
-    if build_row.trigger_now:
-        configure_table = s3db.nightly_configure
-        configure_row = db(configure_table.id == 1).select(limitby = (0, 1)).first()
+    configure_table = s3db.nightly_configure
+    configure_row = db(configure_table.id == 1).select(limitby = (0, 1)).first()
 
-        sctable = db.scheduler_task
-        date = time.strftime("%d.%m.%Y.%H.%M.%S")
-
+    sctable = db.scheduler_task
+    if not build_row.date:
+        date = time.strftime("%d.%m.%Y.%H.%M")
         build_row.update_record(date=date)
+    else:
+        date = build_row.date
 
-        build_item = {
-            "id": build_row.id,
-            "repo_url": build_row.repo_url,
-            "branch": build_row.branch,
-            "template": build_row.template,
-            "prepop": build_row.prepop,
-            "db_type": build_row.db_type,
-            "max_depth": build_row.max_depth,
-            "date":build_row.date
-        }
+    build_item = {
+        "id": build_row.id,
+        "repo_url": build_row.repo_url,
+        "branch": build_row.branch,
+        "template": build_row.template,
+        "prepop": build_row.prepop,
+        "db_type": build_row.db_type,
+        "max_depth": build_row.max_depth,
+        "date":date
+    }
 
-        scheduler_id = current.s3task.schedule_task(
-            date,
-            vars = {
-                "build_item": build_item
-            },
-            function_name = "nightly_build",
-            repeats = 1,
-            timeout = 3600,
-            sync_output = 10
-        )
+    scheduler_id = current.s3task.schedule_task(
+        date,
+        vars = {
+            "build_item": build_item
+        },
+        function_name = "nightly_build",
+        repeats = 1,
+        timeout = 3600,
+        sync_output = 10
+    )
 
-        build_row.update_record(scheduler_id=scheduler_id)
+    build_row.update_record(scheduler_id=scheduler_id)
 
 
