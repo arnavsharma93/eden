@@ -1,0 +1,11 @@
+{{extend "layout.html"}}{{theme=response.s3.theme}}
+<div id="home">
+  <h2 align="center">{{=T("Nightly Build")}}</h2>
+  <p style="text-align:center">
+  {{=T("The nightly build tool allows you to run smoke tests every night on the instance(s)/database(s) you like.")}}
+  </p>
+  <div style="text-align: center">
+    <a href="{{=URL('build')}}" class="action-btn">{{=T("Build")}}</a>
+
+  </div>
+</div>

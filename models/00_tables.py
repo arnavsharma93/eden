@@ -37,6 +37,7 @@ import s3db.inv
 import s3db.irs
 import s3db.member
 import s3db.msg
+import s3db.nightly
 import s3db.ocr
 import s3db.org
 import s3db.patient

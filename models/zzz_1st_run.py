@@ -119,6 +119,13 @@ if len(pop_list) > 0:
                              timeout=300,
                              repeats=0)
 
+    if has_module("nightly"):
+        scheduler_id = s3task.schedule_task("create_nightly_build",
+                                            period=86400,  # 24 hours
+                                            timeout=82800, # 23 hours
+                                            repeats=0    # unlimited
+                                           )
+
     # Daily maintenance
     s3task.schedule_task("maintenance",
                          vars={"period":"daily"},
